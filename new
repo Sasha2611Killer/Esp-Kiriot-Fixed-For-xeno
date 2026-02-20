@@ -195,25 +195,31 @@ function boxBase:Update()
         Torso = cf * ESP.BoxShift
     }
 
-    -- Улучшенная проверка видимости
-    local torsoPos, visible = WorldToViewportPoint(cam, cf.p)
+    -- НАДЕЖНАЯ ПРОВЕРКА ВИДИМОСТИ
+    local cameraCF = cam.CFrame
+    local cameraPos = cameraCF.Position
+    local cameraDir = cameraCF.LookVector
+    local objectPos = cf.p
     
-    -- Проверяем несколько условий:
-    -- 1. Объект должен быть перед камерой (Z > 0.1 для надежности)
-    -- 2. Объект должен быть в пределах видимости камеры
-    -- 3. Проверяем угол между направлением камеры и направлением к объекту
-    local cameraPos = cam.CFrame.Position
-    local cameraDir = cam.CFrame.LookVector
-    local objectDir = (cf.p - cameraPos).Unit
+    -- Вектор от камеры к объекту
+    local toObject = objectPos - cameraPos
     
-    -- Вычисляем угол между направлением камеры и направлением к объекту
-    local dotProduct = cameraDir:Dot(objectDir)
+    -- Проверяем, находится ли объект перед камерой (скалярное произведение > 0)
+    local dotProduct = cameraDir:Dot(toObject.Unit)
     
-    -- Объект считается видимым если:
-    -- Z-координата > 0.1 (надежный порог)
-    -- dotProduct > 0 (объект перед камерой, угол меньше 90 градусов)
-    -- Или visible = true (подсказка от WorldToViewportPoint)
-    local isInFront = (torsoPos.Z > 0.1 and dotProduct > 0) or (visible and dotProduct > 0)
+    -- Получаем экранные координаты и Z-буфер
+    local screenPos, onScreen = WorldToViewportPoint(cam, objectPos)
+    
+    -- Объект считается видимым ТОЛЬКО если:
+    -- 1. Он перед камерой (dotProduct > 0.1 для надежности)
+    -- 2. Его Z-координата положительная (перед камерой)
+    -- 3. onScreen может быть false, если объект близко к краю, но мы все равно показываем
+    local isInFront = dotProduct > 0.1 and screenPos.Z > 0.1
+    
+    -- Дополнительная проверка: если объект далеко сзади, dotProduct будет отрицательным
+    if dotProduct < -0.1 then
+        isInFront = false
+    end
 
     if ESP.Boxes then
         local TopLeft, _ = WorldToViewportPoint(cam, locs.TopLeft.p)
