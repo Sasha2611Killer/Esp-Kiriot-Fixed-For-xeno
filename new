@@ -195,9 +195,25 @@ function boxBase:Update()
         Torso = cf * ESP.BoxShift
     }
 
-    -- Проверяем, находится ли объект перед камерой
-    local torsoPos, _ = WorldToViewportPoint(cam, cf.p)
-    local isInFront = torsoPos.Z > 0
+    -- Улучшенная проверка видимости
+    local torsoPos, visible = WorldToViewportPoint(cam, cf.p)
+    
+    -- Проверяем несколько условий:
+    -- 1. Объект должен быть перед камерой (Z > 0.1 для надежности)
+    -- 2. Объект должен быть в пределах видимости камеры
+    -- 3. Проверяем угол между направлением камеры и направлением к объекту
+    local cameraPos = cam.CFrame.Position
+    local cameraDir = cam.CFrame.LookVector
+    local objectDir = (cf.p - cameraPos).Unit
+    
+    -- Вычисляем угол между направлением камеры и направлением к объекту
+    local dotProduct = cameraDir:Dot(objectDir)
+    
+    -- Объект считается видимым если:
+    -- Z-координата > 0.1 (надежный порог)
+    -- dotProduct > 0 (объект перед камерой, угол меньше 90 градусов)
+    -- Или visible = true (подсказка от WorldToViewportPoint)
+    local isInFront = (torsoPos.Z > 0.1 and dotProduct > 0) or (visible and dotProduct > 0)
 
     if ESP.Boxes then
         local TopLeft, _ = WorldToViewportPoint(cam, locs.TopLeft.p)
