@@ -141,22 +141,8 @@ function boxBase:Remove()
     end
 end
 
--- Функция для проверки, находится ли точка перед камерой
-local function isPointInFront(camera, point)
-    local cameraCFrame = camera.CFrame
-    local cameraPosition = cameraCFrame.Position
-    local cameraDirection = cameraCFrame.LookVector
-    local pointDirection = (point - cameraPosition).Unit
-    
-    -- Проверяем, смотрит ли камера в направлении точки
-    -- Если угол меньше 90 градусов (dot > 0), точка перед камерой
-    local dotProduct = cameraDirection:Dot(pointDirection)
-    return dotProduct > 0
-end
-
 function boxBase:Update()
     if not self.PrimaryPart then
-        --warn("not supposed to print", self.Object)
         return self:Remove()
     end
 
@@ -210,18 +196,17 @@ function boxBase:Update()
         Torso = cf * ESP.BoxShift
     }
 
-    -- Проверяем, находится ли объект перед камерой
-    local isInFront = isPointInFront(cam, cf.p)
-    
     if ESP.Boxes then
-        local TopLeft, Vis1 = WorldToViewportPoint(cam, locs.TopLeft.p)
-        local TopRight, Vis2 = WorldToViewportPoint(cam, locs.TopRight.p)
-        local BottomLeft, Vis3 = WorldToViewportPoint(cam, locs.BottomLeft.p)
-        local BottomRight, Vis4 = WorldToViewportPoint(cam, locs.BottomRight.p)
+        local TopLeft, Vis1, TopLeftZ = WorldToViewportPoint(cam, locs.TopLeft.p)
+        local TopRight, Vis2, TopRightZ = WorldToViewportPoint(cam, locs.TopRight.p)
+        local BottomLeft, Vis3, BottomLeftZ = WorldToViewportPoint(cam, locs.BottomLeft.p)
+        local BottomRight, Vis4, BottomRightZ = WorldToViewportPoint(cam, locs.BottomRight.p)
 
         if self.Components.Quad then
-            -- Показываем только если объект перед камерой И хотя бы одна точка видна
-            if isInFront and (Vis1 or Vis2 or Vis3 or Vis4) then
+            -- Проверяем, что объект перед камерой (Z > 0)
+            local isInFront = (Vis1 and TopLeftZ > 0) or (Vis2 and TopRightZ > 0) or (Vis3 and BottomLeftZ > 0) or (Vis4 and BottomRightZ > 0)
+            
+            if isInFront then
                 self.Components.Quad.Visible = true
                 self.Components.Quad.PointA = Vector2.new(TopRight.X, TopRight.Y)
                 self.Components.Quad.PointB = Vector2.new(TopLeft.X, TopLeft.Y)
@@ -237,10 +222,10 @@ function boxBase:Update()
     end
 
     if ESP.Names then
-        local TagPos, Vis5 = WorldToViewportPoint(cam, locs.TagPos.p)
+        local TagPos, Vis5, TagPosZ = WorldToViewportPoint(cam, locs.TagPos.p)
         
-        -- Показываем имя только если объект перед камерой И точка видна
-        if isInFront and Vis5 then
+        -- Проверяем Z-координату (объект должен быть перед камерой)
+        if Vis5 and TagPosZ > 0 then
             self.Components.Name.Visible = true
             self.Components.Name.Position = Vector2.new(TagPos.X, TagPos.Y)
             self.Components.Name.Text = self.Name
@@ -260,10 +245,10 @@ function boxBase:Update()
     end
     
     if ESP.Tracers then
-        local TorsoPos, Vis6 = WorldToViewportPoint(cam, locs.Torso.p)
+        local TorsoPos, Vis6, TorsoPosZ = WorldToViewportPoint(cam, locs.Torso.p)
 
-        -- Показываем трейсер только если объект перед камерой И точка видна
-        if isInFront and Vis6 then
+        -- Проверяем Z-координату
+        if Vis6 and TorsoPosZ > 0 then
             self.Components.Tracer.Visible = true
             self.Components.Tracer.From = Vector2.new(TorsoPos.X, TorsoPos.Y)
             self.Components.Tracer.To = Vector2.new(cam.ViewportSize.X/2, cam.ViewportSize.Y/ESP.AttachShift)
@@ -284,7 +269,7 @@ function ESP:Add(obj, options)
     local box = setmetatable({
         Name = options.Name or obj.Name,
         Type = "Box",
-        Color = options.Color --[[or self:GetColor(obj)]],
+        Color = options.Color,
         Size = options.Size or self.BoxSize,
         Object = obj,
         Player = options.Player or plrs:GetPlayerFromCharacter(obj),
