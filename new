@@ -141,7 +141,13 @@ function boxBase:Remove()
 end
 
 function boxBase:Update()
-    if not self.PrimaryPart then
+    -- Проверяем, существует ли объект
+    if not self.Object or not self.Object.Parent then
+        return self:Remove()
+    end
+    
+    -- Проверяем, существует ли PrimaryPart
+    if not self.PrimaryPart or not self.PrimaryPart.Parent then
         return self:Remove()
     end
 
@@ -204,19 +210,16 @@ function boxBase:Update()
     -- Вектор от камеры к объекту
     local toObject = objectPos - cameraPos
     
-    -- Проверяем, находится ли объект перед камерой (скалярное произведение > 0)
+    -- Проверяем, находится ли объект перед камерой
     local dotProduct = cameraDir:Dot(toObject.Unit)
     
     -- Получаем экранные координаты и Z-буфер
     local screenPos, onScreen = WorldToViewportPoint(cam, objectPos)
     
-    -- Объект считается видимым ТОЛЬКО если:
-    -- 1. Он перед камерой (dotProduct > 0.1 для надежности)
-    -- 2. Его Z-координата положительная (перед камерой)
-    -- 3. onScreen может быть false, если объект близко к краю, но мы все равно показываем
+    -- Объект считается видимым только если он перед камерой
     local isInFront = dotProduct > 0.1 and screenPos.Z > 0.1
     
-    -- Дополнительная проверка: если объект далеко сзади, dotProduct будет отрицательным
+    -- Если объект сзади, скрываем
     if dotProduct < -0.1 then
         isInFront = false
     end
@@ -336,17 +339,20 @@ function ESP:Add(obj, options)
     })
     self.Objects[obj] = box
     
+    -- Отслеживаем изменения родителя
     obj.AncestryChanged:Connect(function(_, parent)
         if parent == nil and ESP.AutoRemove ~= false then
             box:Remove()
         end
     end)
+    
     obj:GetPropertyChangedSignal("Parent"):Connect(function()
         if obj.Parent == nil and ESP.AutoRemove ~= false then
             box:Remove()
         end
     end)
 
+    -- Отслеживаем смерть
     local hum = obj:FindFirstChildOfClass("Humanoid")
 	if hum then
         hum.Died:Connect(function()
