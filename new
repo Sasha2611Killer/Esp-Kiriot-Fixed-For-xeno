@@ -77,7 +77,7 @@ function ESP:Toggle(bool)
     self.Enabled = bool
     if not bool then
         for i,v in pairs(self.Objects) do
-            if v.Type == "Box" then --fov circle etc
+            if v.Type == "Box" then
                 if v.Temporary then
                     v:Remove()
                 else
@@ -107,7 +107,6 @@ function ESP:AddObjectListener(parent, options)
                         IsEnabled = options.IsEnabled,
                         RenderInNil = options.RenderInNil
                     })
-                    --TODO: add a better way of passing options
                     if options.OnAdded then
                         coroutine.wrap(options.OnAdded)(box)
                     end
@@ -196,16 +195,17 @@ function boxBase:Update()
         Torso = cf * ESP.BoxShift
     }
 
+    -- Проверяем, находится ли объект перед камерой
+    local torsoPos, _ = WorldToViewportPoint(cam, cf.p)
+    local isInFront = torsoPos.Z > 0
+
     if ESP.Boxes then
-        local TopLeft, Vis1, TopLeftZ = WorldToViewportPoint(cam, locs.TopLeft.p)
-        local TopRight, Vis2, TopRightZ = WorldToViewportPoint(cam, locs.TopRight.p)
-        local BottomLeft, Vis3, BottomLeftZ = WorldToViewportPoint(cam, locs.BottomLeft.p)
-        local BottomRight, Vis4, BottomRightZ = WorldToViewportPoint(cam, locs.BottomRight.p)
+        local TopLeft, _ = WorldToViewportPoint(cam, locs.TopLeft.p)
+        local TopRight, _ = WorldToViewportPoint(cam, locs.TopRight.p)
+        local BottomLeft, _ = WorldToViewportPoint(cam, locs.BottomLeft.p)
+        local BottomRight, _ = WorldToViewportPoint(cam, locs.BottomRight.p)
 
         if self.Components.Quad then
-            -- Проверяем, что объект перед камерой (Z > 0)
-            local isInFront = (Vis1 and TopLeftZ > 0) or (Vis2 and TopRightZ > 0) or (Vis3 and BottomLeftZ > 0) or (Vis4 and BottomRightZ > 0)
-            
             if isInFront then
                 self.Components.Quad.Visible = true
                 self.Components.Quad.PointA = Vector2.new(TopRight.X, TopRight.Y)
@@ -222,10 +222,9 @@ function boxBase:Update()
     end
 
     if ESP.Names then
-        local TagPos, Vis5, TagPosZ = WorldToViewportPoint(cam, locs.TagPos.p)
+        local TagPos, _ = WorldToViewportPoint(cam, locs.TagPos.p)
         
-        -- Проверяем Z-координату (объект должен быть перед камерой)
-        if Vis5 and TagPosZ > 0 then
+        if isInFront then
             self.Components.Name.Visible = true
             self.Components.Name.Position = Vector2.new(TagPos.X, TagPos.Y)
             self.Components.Name.Text = self.Name
@@ -245,10 +244,9 @@ function boxBase:Update()
     end
     
     if ESP.Tracers then
-        local TorsoPos, Vis6, TorsoPosZ = WorldToViewportPoint(cam, locs.Torso.p)
+        local TorsoPos, _ = WorldToViewportPoint(cam, locs.Torso.p)
 
-        -- Проверяем Z-координату
-        if Vis6 and TorsoPosZ > 0 then
+        if isInFront then
             self.Components.Tracer.Visible = true
             self.Components.Tracer.From = Vector2.new(TorsoPos.X, TorsoPos.Y)
             self.Components.Tracer.To = Vector2.new(cam.ViewportSize.X/2, cam.ViewportSize.Y/ESP.AttachShift)
@@ -361,12 +359,14 @@ local function CharAdded(char)
         })
     end
 end
+
 local function PlayerAdded(p)
     p.CharacterAdded:Connect(CharAdded)
     if p.Character then
         coroutine.wrap(CharAdded)(p.Character)
     end
 end
+
 plrs.PlayerAdded:Connect(PlayerAdded)
 for i,v in pairs(plrs:GetPlayers()) do
     if v ~= plr then
