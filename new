@@ -14,7 +14,8 @@ local ESP = {
     Players = true,
     
     Objects = setmetatable({}, {__mode="kv"}),
-    Overrides = {}
+    Overrides = {},
+    _connections = {} -- Хранилище для всех соединений
 }
 
 --Declarations--
@@ -22,6 +23,7 @@ local cam = workspace.CurrentCamera
 local plrs = game:GetService("Players")
 local plr = plrs.LocalPlayer
 local mouse = plr:GetMouse()
+local RunService = game:GetService("RunService")
 
 local V3new = Vector3.new
 local WorldToViewportPoint = cam.WorldToViewportPoint
@@ -29,7 +31,6 @@ local WorldToViewportPoint = cam.WorldToViewportPoint
 --Functions--
 local function Draw(obj, props)
 	local new = Drawing.new(obj)
-	
 	props = props or {}
 	for i,v in pairs(props) do
 		new[i] = v
@@ -42,7 +43,6 @@ function ESP:GetTeam(p)
 	if ov then
 		return ov(p)
 	end
-	
 	return p and p.Team
 end
 
@@ -51,7 +51,6 @@ function ESP:IsTeamMate(p)
 	if ov then
 		return ov(p)
     end
-    
     return self:GetTeam(p) == self:GetTeam(plr)
 end
 
@@ -69,7 +68,6 @@ function ESP:GetPlrFromChar(char)
 	if ov then
 		return ov(char)
 	end
-	
 	return plrs:GetPlayerFromCharacter(char)
 end
 
@@ -78,15 +76,11 @@ function ESP:Toggle(bool)
     if not bool then
         for i,v in pairs(self.Objects) do
             if v.Type == "Box" then
-                if v.Temporary then
-                    v:Remove()
-                else
-                    for i,v in pairs(v.Components) do
-                        v.Visible = false
-                    end
-                end
+                v:Remove()
             end
         end
+        -- Очищаем таблицу объектов
+        self.Objects = setmetatable({}, {__mode="kv"})
     end
 end
 
@@ -115,40 +109,75 @@ function ESP:AddObjectListener(parent, options)
         end
     end
 
+    local connection
     if options.Recursive then
-        parent.DescendantAdded:Connect(NewListener)
+        connection = parent.DescendantAdded:Connect(NewListener)
         for i,v in pairs(parent:GetDescendants()) do
             coroutine.wrap(NewListener)(v)
         end
     else
-        parent.ChildAdded:Connect(NewListener)
+        connection = parent.ChildAdded:Connect(NewListener)
         for i,v in pairs(parent:GetChildren()) do
             coroutine.wrap(NewListener)(v)
         end
     end
+    
+    -- Сохраняем соединение для возможной очистки
+    table.insert(self._connections, connection)
+    return connection
 end
 
 local boxBase = {}
 boxBase.__index = boxBase
 
-function boxBase:Remove()
-    ESP.Objects[self.Object] = nil
+function boxBase:Cleanup()
+    -- Удаляем все Drawing объекты
     for i,v in pairs(self.Components) do
-        v.Visible = false
-        v:Remove()
+        if v and v.Remove then
+            pcall(function()
+                v.Visible = false
+                v:Remove()
+            end)
+        end
         self.Components[i] = nil
     end
+    
+    -- Отключаем все события
+    if self._connections then
+        for _, conn in pairs(self._connections) do
+            pcall(function()
+                conn:Disconnect()
+            end)
+        end
+        self._connections = nil
+    end
+end
+
+function boxBase:Remove()
+    if ESP.Objects[self.Object] then
+        ESP.Objects[self.Object] = nil
+    end
+    
+    self:Cleanup()
+    
+    -- Очищаем ссылки для сборщика мусора
+    self.Object = nil
+    self.PrimaryPart = nil
+    self.Player = nil
+    self.Components = {}
 end
 
 function boxBase:Update()
     -- Проверяем, существует ли объект
     if not self.Object or not self.Object.Parent then
-        return self:Remove()
+        self:Remove()
+        return
     end
     
     -- Проверяем, существует ли PrimaryPart
     if not self.PrimaryPart or not self.PrimaryPart.Parent then
-        return self:Remove()
+        self:Remove()
+        return
     end
 
     local color
@@ -177,7 +206,9 @@ function boxBase:Update()
 
     if not allow then
         for i,v in pairs(self.Components) do
-            v.Visible = false
+            if v then
+                v.Visible = false
+            end
         end
         return
     end
@@ -201,55 +232,45 @@ function boxBase:Update()
         Torso = cf * ESP.BoxShift
     }
 
-    -- НАДЕЖНАЯ ПРОВЕРКА ВИДИМОСТИ
+    -- Проверка видимости
     local cameraCF = cam.CFrame
     local cameraPos = cameraCF.Position
     local cameraDir = cameraCF.LookVector
     local objectPos = cf.p
     
-    -- Вектор от камеры к объекту
     local toObject = objectPos - cameraPos
-    
-    -- Проверяем, находится ли объект перед камерой
     local dotProduct = cameraDir:Dot(toObject.Unit)
-    
-    -- Получаем экранные координаты и Z-буфер
     local screenPos, onScreen = WorldToViewportPoint(cam, objectPos)
-    
-    -- Объект считается видимым только если он перед камерой
     local isInFront = dotProduct > 0.1 and screenPos.Z > 0.1
     
-    -- Если объект сзади, скрываем
     if dotProduct < -0.1 then
         isInFront = false
     end
 
-    if ESP.Boxes then
+    if ESP.Boxes and self.Components.Quad then
         local TopLeft, _ = WorldToViewportPoint(cam, locs.TopLeft.p)
         local TopRight, _ = WorldToViewportPoint(cam, locs.TopRight.p)
         local BottomLeft, _ = WorldToViewportPoint(cam, locs.BottomLeft.p)
         local BottomRight, _ = WorldToViewportPoint(cam, locs.BottomRight.p)
 
-        if self.Components.Quad then
-            if isInFront then
-                self.Components.Quad.Visible = true
-                self.Components.Quad.PointA = Vector2.new(TopRight.X, TopRight.Y)
-                self.Components.Quad.PointB = Vector2.new(TopLeft.X, TopLeft.Y)
-                self.Components.Quad.PointC = Vector2.new(BottomLeft.X, BottomLeft.Y)
-                self.Components.Quad.PointD = Vector2.new(BottomRight.X, BottomRight.Y)
-                self.Components.Quad.Color = color
-            else
-                self.Components.Quad.Visible = false
-            end
+        if isInFront then
+            self.Components.Quad.Visible = true
+            self.Components.Quad.PointA = Vector2.new(TopRight.X, TopRight.Y)
+            self.Components.Quad.PointB = Vector2.new(TopLeft.X, TopLeft.Y)
+            self.Components.Quad.PointC = Vector2.new(BottomLeft.X, BottomLeft.Y)
+            self.Components.Quad.PointD = Vector2.new(BottomRight.X, BottomRight.Y)
+            self.Components.Quad.Color = color
+        else
+            self.Components.Quad.Visible = false
         end
-    else
+    elseif self.Components.Quad then
         self.Components.Quad.Visible = false
     end
 
     if ESP.Names then
         local TagPos, _ = WorldToViewportPoint(cam, locs.TagPos.p)
         
-        if isInFront then
+        if isInFront and self.Components.Name and self.Components.Distance then
             self.Components.Name.Visible = true
             self.Components.Name.Position = Vector2.new(TagPos.X, TagPos.Y)
             self.Components.Name.Text = self.Name
@@ -260,15 +281,15 @@ function boxBase:Update()
             self.Components.Distance.Text = math.floor((cam.CFrame.p - cf.p).magnitude) .. "m"
             self.Components.Distance.Color = color
         else
-            self.Components.Name.Visible = false
-            self.Components.Distance.Visible = false
+            if self.Components.Name then self.Components.Name.Visible = false end
+            if self.Components.Distance then self.Components.Distance.Visible = false end
         end
     else
-        self.Components.Name.Visible = false
-        self.Components.Distance.Visible = false
+        if self.Components.Name then self.Components.Name.Visible = false end
+        if self.Components.Distance then self.Components.Distance.Visible = false end
     end
     
-    if ESP.Tracers then
+    if ESP.Tracers and self.Components.Tracer then
         local TorsoPos, _ = WorldToViewportPoint(cam, locs.Torso.p)
 
         if isInFront then
@@ -279,7 +300,7 @@ function boxBase:Update()
         else
             self.Components.Tracer.Visible = false
         end
-    else
+    elseif self.Components.Tracer then
         self.Components.Tracer.Visible = false
     end
 end
@@ -287,6 +308,11 @@ end
 function ESP:Add(obj, options)
     if not obj.Parent and not options.RenderInNil then
         return warn(obj, "has no parent")
+    end
+
+    -- Если объект уже есть, удаляем старый
+    if self:GetBox(obj) then
+        self:GetBox(obj):Remove()
     end
 
     local box = setmetatable({
@@ -301,30 +327,29 @@ function ESP:Add(obj, options)
         IsEnabled = options.IsEnabled,
         Temporary = options.Temporary,
         ColorDynamic = options.ColorDynamic,
-        RenderInNil = options.RenderInNil
+        RenderInNil = options.RenderInNil,
+        _connections = {} -- для хранения соединений
     }, boxBase)
-
-    if self:GetBox(obj) then
-        self:GetBox(obj):Remove()
-    end
 
     box.Components["Quad"] = Draw("Quad", {
         Thickness = self.Thickness,
-        Color = color,
+        Color = self.Color,
         Transparency = 1,
         Filled = false,
         Visible = self.Enabled and self.Boxes
     })
+    
     box.Components["Name"] = Draw("Text", {
 		Text = box.Name,
-		Color = box.Color,
+		Color = self.Color,
 		Center = true,
 		Outline = true,
         Size = 19,
         Visible = self.Enabled and self.Names
 	})
+	
 	box.Components["Distance"] = Draw("Text", {
-		Color = box.Color,
+		Color = self.Color,
 		Center = true,
 		Outline = true,
         Size = 19,
@@ -332,34 +357,31 @@ function ESP:Add(obj, options)
 	})
 	
 	box.Components["Tracer"] = Draw("Line", {
-		Thickness = ESP.Thickness,
-		Color = box.Color,
+		Thickness = self.Thickness,
+		Color = self.Color,
         Transparency = 1,
         Visible = self.Enabled and self.Tracers
     })
+    
     self.Objects[obj] = box
     
-    -- Отслеживаем изменения родителя
-    obj.AncestryChanged:Connect(function(_, parent)
-        if parent == nil and ESP.AutoRemove ~= false then
+    -- Отслеживаем удаление объекта (только одно соединение!)
+    local ancestryConn = obj.AncestryChanged:Connect(function(_, parent)
+        if parent == nil and self.AutoRemove ~= false then
             box:Remove()
         end
     end)
+    table.insert(box._connections, ancestryConn)
     
-    obj:GetPropertyChangedSignal("Parent"):Connect(function()
-        if obj.Parent == nil and ESP.AutoRemove ~= false then
-            box:Remove()
-        end
-    end)
-
     -- Отслеживаем смерть
     local hum = obj:FindFirstChildOfClass("Humanoid")
 	if hum then
-        hum.Died:Connect(function()
-            if ESP.AutoRemove ~= false then
+        local diedConn = hum.Died:Connect(function()
+            if self.AutoRemove ~= false then
                 box:Remove()
             end
 		end)
+        table.insert(box._connections, diedConn)
     end
 
     return box
@@ -367,6 +389,8 @@ end
 
 local function CharAdded(char)
     local p = plrs:GetPlayerFromCharacter(char)
+    if not p then return end -- Игрок не найден
+    
     if not char:FindFirstChild("HumanoidRootPart") then
         local ev
         ev = char.ChildAdded:Connect(function(c)
@@ -379,6 +403,8 @@ local function CharAdded(char)
                 })
             end
         end)
+        -- Сохраняем соединение
+        table.insert(ESP._connections, ev)
     else
         ESP:Add(char, {
             Name = p.Name,
@@ -389,26 +415,67 @@ local function CharAdded(char)
 end
 
 local function PlayerAdded(p)
-    p.CharacterAdded:Connect(CharAdded)
+    if p == plr then return end -- Игнорируем локального игрока
+    
+    local charConn = p.CharacterAdded:Connect(CharAdded)
+    table.insert(ESP._connections, charConn)
+    
     if p.Character then
         coroutine.wrap(CharAdded)(p.Character)
     end
 end
 
+local function PlayerRemoving(p)
+    -- Очищаем ESP для уходящего игрока
+    if p.Character and ESP.Objects[p.Character] then
+        ESP.Objects[p.Character]:Remove()
+    end
+end
+
+-- Подключаем обработчики игроков
 plrs.PlayerAdded:Connect(PlayerAdded)
+plrs.PlayerRemoving:Connect(PlayerRemoving)
+
 for i,v in pairs(plrs:GetPlayers()) do
     if v ~= plr then
         PlayerAdded(v)
     end
 end
 
-game:GetService("RunService").RenderStepped:Connect(function()
+-- Оптимизированный рендер-луп
+local lastTime = 0
+RunService.RenderStepped:Connect(function()
     cam = workspace.CurrentCamera
-    for i,v in (ESP.Enabled and pairs or ipairs)(ESP.Objects) do
-        if v.Update then
-            local s,e = pcall(v.Update, v)
-            if not s then warn("[EU]", e, v.Object:GetFullName()) end
+    
+    -- Собираем объекты для удаления
+    local toRemove = {}
+    
+    for obj, box in pairs(ESP.Objects) do
+        if box and box.Update then
+            local success, err = pcall(function()
+                box:Update()
+            end)
+            
+            if not success then
+                warn("[ESP Error]", err)
+                table.insert(toRemove, obj)
+            end
         end
+    end
+    
+    -- Удаляем проблемные объекты
+    for _, obj in ipairs(toRemove) do
+        if ESP.Objects[obj] then
+            ESP.Objects[obj]:Remove()
+        end
+    end
+end)
+
+-- Периодическая очистка памяти (каждые 5 минут)
+spawn(function()
+    while true do
+        wait(300)
+        collectgarbage()
     end
 end)
 
